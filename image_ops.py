@@ -18,18 +18,7 @@
 
 
 import bpy  # noqa:F401
-
 import numpy as np
-
-CUDA_ACTIVE = False
-try:
-    import cupy as cup
-
-    CUDA_ACTIVE = True
-except Exception:
-    CUDA_ACTIVE = False
-    cup = np
-
 from collections import OrderedDict
 
 from .bpy_amb import master_ops
@@ -38,6 +27,14 @@ import importlib
 
 importlib.reload(master_ops)
 importlib.reload(utils)
+
+LIBS_ACTIVE = False
+try:
+    import moderngl
+
+    LIBS_ACTIVE = True
+except Exception:
+    LIBS_ACTIVE = False
 
 
 def get_teximage(context):
@@ -66,15 +63,20 @@ def create(lc, additional_classes):
     """ create(locals()) """
     load_these = []
     for name, obj in lc.copy().items():
-        if hasattr(obj, "__bases__") and obj.__bases__[0].__name__ == "ImageOperatorGenerator":
+        if (
+            hasattr(obj, "__bases__")
+            and obj.__bases__[0].__name__ == "ImageOperatorGenerator"
+        ):
             load_these.append(obj)
 
     _props = OrderedDict()
     _props["source_enum"] = bpy.props.EnumProperty(
-        name="FromEnum", items=[("active", "Active", "", 1), ("defined", "Specified", "", 2)]
+        name="FromEnum",
+        items=[("active", "Active", "", 1), ("defined", "Specified", "", 2)],
     )
     _props["target_enum"] = bpy.props.EnumProperty(
-        name="ToEnum", items=[("active", "Active", "", 1), ("defined", "Specified", "", 2)]
+        name="ToEnum",
+        items=[("active", "Active", "", 1), ("defined", "Specified", "", 2)],
     )
     _props["source"] = bpy.props.PointerProperty(name="Image", type=bpy.types.Image)
     _props["target"] = bpy.props.PointerProperty(name="Image", type=bpy.types.Image)
@@ -82,6 +84,8 @@ def create(lc, additional_classes):
     def _panel_draw(self, context):
         layout = self.layout
         col = layout.column(align=True)
+        if not LIBS_ACTIVE:
+            col.label(text="Libs not installed!")
         box = col.box()
         row = box.row()
         row.label(text="Source:")
@@ -113,40 +117,6 @@ def create(lc, additional_classes):
     return pbuild.register_params, pbuild.unregister_params
 
 
-class BTT_InstallLibraries(bpy.types.Operator):
-    bl_idname = "uv.spacker_install_libraries"
-    bl_label = "Install required libraries: pip, cffi,  pyclipper"
-
-    def execute(self, context):
-        from subprocess import call
-
-        pp = bpy.app.binary_path_python
-
-        call([pp, "-m", "ensurepip", "--user"])
-        call([pp, "-m", "pip", "install", "--user", "cupy-cuda100"])
-
-        global CUDA_ACTIVE
-        CUDA_ACTIVE = True
-
-        import cupy
-
-        global cup
-        cup = cupy
-
-        return {"FINISHED"}
-
-
-class BTT_AddonPreferences(bpy.types.AddonPreferences):
-    bl_idname = __name__
-
-    def draw(self, context):
-        row = self.layout.row()
-        if CUDA_ACTIVE is False:
-            row.operator(BTT_InstallLibraries.bl_idname, text="Install CUDA acceleration library")
-        else:
-            row.label(text="All optional libraries installed")
-
-
 class ImageOperator(master_ops.MacroOperator):
     def payload(self, image, context):
         pass
@@ -166,14 +136,9 @@ class ImageOperator(master_ops.MacroOperator):
         else:
             target_image = image
 
-        if self.force_numpy:
-            sourcepixels = np.array(source_image.pixels[:], dtype=np.float32).reshape(
-                source_image.size[1], source_image.size[0], 4
-            )
-        else:
-            sourcepixels = cup.array(source_image.pixels[:], dtype=cup.float32).reshape(
-                source_image.size[1], source_image.size[0], 4
-            )
+        sourcepixels = np.array(source_image.pixels[:], dtype=np.float32).reshape(
+            source_image.size[1], source_image.size[0], 4
+        )
 
         with utils.Profile_this(lines=10):
             sourcepixels = self.payload(sourcepixels, context)
@@ -191,9 +156,7 @@ class ImageOperator(master_ops.MacroOperator):
 class ImageOperatorGenerator(master_ops.OperatorGenerator):
     def __init__(self, master_name):
         self.init_begin(master_name)
-        self.force_numpy = False
         self.generate()
         self.init_end()
         self.name = "IMAGE_OT_" + self.name
         self.create_op(ImageOperator, "image")
-        self.op.force_numpy = self.force_numpy

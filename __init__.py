@@ -28,14 +28,13 @@ bl_info = {
 
 import numpy as np
 
-CUDA_ACTIVE = False
+LIBS_ACTIVE = False
 try:
-    import cupy as cup
+    import moderngl
 
-    CUDA_ACTIVE = True
+    LIBS_ACTIVE = True
 except Exception:
-    CUDA_ACTIVE = False
-    cup = np
+    LIBS_ACTIVE = False
 
 import bpy
 
@@ -56,15 +55,12 @@ class BTT_InstallLibraries(bpy.types.Operator):
         pp = bpy.app.binary_path_python
 
         call([pp, "-m", "ensurepip", "--user"])
-        call([pp, "-m", "pip", "install", "--user", "cupy-cuda100"])
+        call([pp, "-m", "pip", "install", "--user", "moderngl"])
 
-        global CUDA_ACTIVE
-        CUDA_ACTIVE = True
+        global LIBS_ACTIVE
+        LIBS_ACTIVE = True
 
-        import cupy
-
-        global cup
-        cup = cupy
+        import moderngl
 
         return {"FINISHED"}
 
@@ -74,9 +70,9 @@ class BTT_AddonPreferences(bpy.types.AddonPreferences):
 
     def draw(self, context):
 
-        if CUDA_ACTIVE is False:
+        if LIBS_ACTIVE is False:
             info_text = (
-                "The button below should automatically install required CUDA libs.\n"
+                "The button below should automatically install required libs.\n"
                 "You need to run the reload scripts command in Blender to activate the\n"
                 " functionality after the installation finishes, or restart Blender."
             )
@@ -86,7 +82,9 @@ class BTT_AddonPreferences(bpy.types.AddonPreferences):
                 row.label(text=l)
             # col.separator()
             row = self.layout.row()
-            row.operator(BTT_InstallLibraries.bl_idname, text="Install CUDA acceleration library")
+            row.operator(
+                BTT_InstallLibraries.bl_idname, text="Install required libraries"
+            )
         else:
             row = self.layout.row()
             row.label(text="All optional libraries installed")
@@ -94,14 +92,18 @@ class BTT_AddonPreferences(bpy.types.AddonPreferences):
 
 def gauss_curve(x):
     # gaussian with 0.01831 at last
-    res = cup.array([cup.exp(-((i * (2 / x)) ** 2)) for i in range(-x, x + 1)], dtype=cup.float32)
-    res /= cup.sum(res)
+    res = np.array(
+        [np.exp(-((i * (2 / x)) ** 2)) for i in range(-x, x + 1)], dtype=np.float32
+    )
+    res /= np.sum(res)
     return res
 
 
 def gauss_curve_np(x):
     # gaussian with 0.01831 at last
-    res = np.array([np.exp(-((i * (2 / x)) ** 2)) for i in range(-x, x + 1)], dtype=np.float32)
+    res = np.array(
+        [np.exp(-((i * (2 / x)) ** 2)) for i in range(-x, x + 1)], dtype=np.float32
+    )
     res /= np.sum(res)
     return res
 
@@ -114,7 +116,7 @@ def vectors_to_nmap(vectors, nmap):
 
 
 def nmap_to_vectors(nmap):
-    vectors = cup.empty((nmap.shape[0], nmap.shape[1], 3), dtype=cup.float32)
+    vectors = np.empty((nmap.shape[0], nmap.shape[1], 3), dtype=np.float32)
     vectors[..., 0] = nmap[..., 0] - 0.5
     vectors[..., 1] = nmap[..., 1] - 0.5
     vectors[..., 2] = nmap[..., 2] - 0.5
@@ -130,7 +132,7 @@ def explicit_cross(a, b):
     x = a[..., 1] * b[..., 2] - a[..., 2] * b[..., 1]
     y = a[..., 2] * b[..., 0] - a[..., 0] * b[..., 2]
     z = a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
-    return cup.dstack([x, y, z])
+    return np.dstack([x, y, z])
 
 
 def aroll0(o, i, d):
@@ -179,12 +181,14 @@ def addroll1(o, i, d):
 
 def convolution(ssp, intens, sfil):
     # source, intensity, convolution matrix
-    tpx = cup.zeros(ssp.shape, dtype=float)
+    tpx = np.zeros(ssp.shape, dtype=float)
     ysz, xsz = sfil.shape[0], sfil.shape[1]
     ystep = int(4 * ssp.shape[1])
     for y in range(ysz):
         for x in range(xsz):
-            tpx += cup.roll(ssp, (x - xsz // 2) * 4 + (y - ysz // 2) * ystep) * sfil[y, x]
+            tpx += (
+                np.roll(ssp, (x - xsz // 2) * 4 + (y - ysz // 2) * ystep) * sfil[y, x]
+            )
     return tpx
 
 
@@ -200,25 +204,25 @@ def grayscale(ssp):
 def normalize(pix, save_alpha=False):
     if save_alpha:
         A = pix[..., 3]
-    t = pix - cup.min(pix)
-    t = t / cup.max(t)
+    t = pix - np.min(pix)
+    t = t / np.max(t)
     if save_alpha:
         t[..., 3] = A
     return t
 
 
 def sobel_x(pix, intensity):
-    gx = cup.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+    gx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
     return convolution(pix, intensity, gx)
 
 
 def sobel_y(pix, intensity):
-    gy = cup.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
+    gy = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
     return convolution(pix, intensity, gy)
 
 
 def sobel(pix, intensity):
-    retarr = cup.zeros(pix.shape)
+    retarr = np.zeros(pix.shape)
     retarr = sobel_x(pix, 1.0)
     retarr += sobel_y(pix, 1.0)
     retarr = (retarr * intensity) * 0.5 + 0.5
@@ -227,7 +231,7 @@ def sobel(pix, intensity):
 
 
 def gaussian_repeat(pix, s):
-    res = cup.zeros(pix.shape, dtype=cup.float32)
+    res = np.zeros(pix.shape, dtype=np.float32)
     gcr = gauss_curve(s)
     for i in range(-s, s + 1):
         if i != 0:
@@ -247,7 +251,7 @@ def gaussian_repeat(pix, s):
 
 
 def sharpen(pix, width, intensity):
-    # return convolution(pix, intensity, cup.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]]))
+    # return convolution(pix, intensity, np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]]))
     A = pix[..., 3]
     gas = gaussian_repeat(pix, width)
     pix += (pix - gas) * intensity
@@ -305,7 +309,9 @@ def hist_match(source, template):
 
     # get the set of unique pixel values and their corresponding indices and
     # counts
-    s_values, bin_idx, s_counts = np.unique(source, return_inverse=True, return_counts=True)
+    s_values, bin_idx, s_counts = np.unique(
+        source, return_inverse=True, return_counts=True
+    )
     t_values, t_counts = np.unique(template, return_counts=True)
 
     # take the cumsum of the counts and normalize by the number of pixels to
@@ -334,12 +340,12 @@ def gaussianize(source, NG=1000):
 
     t_max = 0.0
     for i in range(3):
-        # s_values, bin_idx, s_counts = cup.lib.arraysetops.unique(
+        # s_values, bin_idx, s_counts = np.lib.arraysetops.unique(
         s_values, bin_idx, s_counts = np.unique(
             source[..., i].ravel(), return_inverse=True, return_counts=True
         )
 
-        s_quantiles = np.cumsum(s_counts).astype(cup.float64)
+        s_quantiles = np.cumsum(s_counts).astype(np.float64)
         s_quantiles /= s_quantiles[-1]
         s_max = s_quantiles[-1]
         if s_max > t_max:
@@ -362,7 +368,7 @@ def degaussianize(source, transforms):
         )
         t_values, t_quantiles, _ = transforms[i]
 
-        s_quantiles = np.cumsum(s_counts).astype(cup.float64)
+        s_quantiles = np.cumsum(s_counts).astype(np.float64)
         s_quantiles /= s_quantiles[-1]
 
         tv = np.interp(s_quantiles, t_quantiles, t_values)[bin_idx]
@@ -372,14 +378,14 @@ def degaussianize(source, transforms):
 
 
 def cumulative_distribution(data, bins):
-    assert cup.min(data) >= 0.0 and cup.max(data) <= 1.0
-    hg_av, hg_a = cup.unique(cup.floor(data * (bins - 1)), return_index=True)
-    hg_a = cup.float32(hg_a)
-    hgs = cup.sum(hg_a)
+    assert np.min(data) >= 0.0 and np.max(data) <= 1.0
+    hg_av, hg_a = np.unique(np.floor(data * (bins - 1)), return_index=True)
+    hg_a = np.float32(hg_a)
+    hgs = np.sum(hg_a)
     hg_a /= hgs
-    res = cup.zeros((bins,))
-    res[cup.int64(hg_av)] = hg_a
-    return cup.cumsum(res)
+    res = np.zeros((bins,))
+    res[np.int64(hg_av)] = hg_a
+    return np.cumsum(res)
 
 
 def hi_pass_balance(pix, s, zoom):
@@ -407,23 +413,23 @@ def hi_pass_balance(pix, s, zoom):
 
 def hgram_equalize(pix, intensity, atest):
     old = pix.copy()
-    # aw = cup.argwhere(pix[..., 3] > atest)
+    # aw = np.argwhere(pix[..., 3] > atest)
     aw = (pix[..., 3] > atest).nonzero()
     aws = (aw[0], aw[1])
     # aws = (aw[:, 0], aw[:, 1])
     for c in range(3):
         t = pix[..., c][aws]
         pix[..., c][aws] = np.sort(t).searchsorted(t)
-        # pix[..., c][aws] = cup.argsort(t)
+        # pix[..., c][aws] = np.argsort(t)
     pix[..., :3] /= np.max(pix[..., :3])
     return old * (1.0 - intensity) + pix * intensity
 
 
 def bilateral(img_in, sigma_s, sigma_v, eps=1e-8):
     # gaussian
-    gsi = lambda r2, sigma: cup.exp(-0.5 * r2 / sigma ** 2)
-    win_width = int(cup.ceil(3 * sigma_s))
-    wgt_sum = cup.ones(img_in.shape) * eps
+    gsi = lambda r2, sigma: np.exp(-0.5 * r2 / sigma ** 2)
+    win_width = int(np.ceil(3 * sigma_s))
+    wgt_sum = np.ones(img_in.shape) * eps
     result = img_in * eps
     off = np.empty_like(img_in, dtype=np.float32)
 
@@ -479,7 +485,7 @@ def median_filter_blobs(pix, s, picked="center"):
         pick = s * 2 - 1
 
     temp = pix.copy()
-    r = cup.zeros((ph, s * 2, 4), dtype=np.float32)
+    r = np.zeros((ph, s * 2, 4), dtype=np.float32)
     for x in range(pw):
         if x - s >= 0 and x + s <= pw:
             r[:, :, :] = temp[:, x - s : x + s, :]
@@ -494,10 +500,10 @@ def median_filter_blobs(pix, s, picked="center"):
             r[:, :-dp, :] = temp[:, x - s :, :]
             r[:, -dp:, :] = temp[:, :dp, :]
 
-        pix[:, x, :] = cup.sort(r, axis=1)[:, pick, :]
+        pix[:, x, :] = np.sort(r, axis=1)[:, pick, :]
 
     temp = pix.copy()
-    r = cup.zeros((s * 2, pw, 4), dtype=np.float32)
+    r = np.zeros((s * 2, pw, 4), dtype=np.float32)
     for y in range(ph):
         if y - s >= 0 and y + s <= ph:
             r[:, :, :] = temp[y - s : y + s, :, :]
@@ -512,7 +518,7 @@ def median_filter_blobs(pix, s, picked="center"):
             r[:-dp, :, :] = temp[y - s :, :, :]
             r[-dp:, :, :] = temp[:dp, :, :]
 
-        pix[y, :, :] = cup.sort(r, axis=0)[pick, :, :]
+        pix[y, :, :] = np.sort(r, axis=0)[pick, :, :]
 
     return pix
 
@@ -534,23 +540,23 @@ def normals_simple(pix, source):
     py[:, :, 0] = 0
 
     # normalize
-    # dv = max(abs(cup.min(curve)), abs(cup.max(curve)))
+    # dv = max(abs(np.min(curve)), abs(np.max(curve)))
     # curve /= dv
 
     # find the imagined approximate surface normal
-    # arr = cup.cross(px[:, :, :3], py[:, :, :3])
+    # arr = np.cross(px[:, :, :3], py[:, :, :3])
     arr = explicit_cross(px[:, :, :3], py[:, :, :3])
     print(arr.shape)
 
     # normalization: vec *= 1/len(vec)
-    m = 1.0 / cup.sqrt(arr[:, :, 0] ** 2 + arr[:, :, 1] ** 2 + arr[:, :, 2] ** 2)
+    m = 1.0 / np.sqrt(arr[:, :, 0] ** 2 + arr[:, :, 1] ** 2 + arr[:, :, 2] ** 2)
     arr[..., 0] *= m
     arr[..., 1] *= m
     arr[..., 2] *= m
     arr[..., 0] = -arr[..., 0]
 
     # normals format
-    retarr = cup.zeros(sshape)
+    retarr = np.zeros(sshape)
     vectors_to_nmap(arr, retarr)
     retarr[:, :, 3] = pix[..., 3]
     return retarr
@@ -558,11 +564,11 @@ def normals_simple(pix, source):
 
 def normals_to_curvature(pix):
     intensity = 1.0
-    curve = cup.zeros((pix.shape[0], pix.shape[1]), dtype=cup.float32)
+    curve = np.zeros((pix.shape[0], pix.shape[1]), dtype=np.float32)
     vectors = nmap_to_vectors(pix)
 
-    # y_vec = cup.array([1, 0, 0], dtype=cup.float32)
-    # x_vec = cup.array([0, 1, 0], dtype=cup.float32)
+    # y_vec = np.array([1, 0, 0], dtype=np.float32)
+    # x_vec = np.array([0, 1, 0], dtype=np.float32)
 
     # yd = vectors.dot(x_vec)
     # xd = vectors.dot(y_vec)
@@ -587,7 +593,7 @@ def normals_to_curvature(pix):
     curve[:, 0] -= xd[:, -1]
 
     # normalize
-    dv = max(abs(cup.min(curve)), abs(cup.max(curve)))
+    dv = max(abs(np.min(curve)), abs(np.max(curve)))
     curve /= dv
 
     # 0 = 0.5 grey
@@ -602,7 +608,7 @@ def normals_to_curvature(pix):
 def curvature_to_height(image, h2, iterations=2000):
     f = image[..., 0]
     A = image[..., 3]
-    u = cup.ones_like(f) * 0.5
+    u = np.ones_like(f) * 0.5
 
     k = 1
     t = np.empty_like(u, dtype=np.float32)
@@ -630,16 +636,16 @@ def curvature_to_height(image, h2, iterations=2000):
         u = t * A
 
     u = -u
-    u -= cup.min(u)
-    u /= cup.max(u)
+    u -= np.min(u)
+    u /= np.max(u)
 
-    return cup.dstack([u, u, u, image[..., 3]])
+    return np.dstack([u, u, u, image[..., 3]])
 
 
 def normals_to_height(image, grid_steps, iterations=2000, intensity=1.0):
     # A = image[..., 3]
     ih, iw = image.shape[0], image.shape[1]
-    u = cup.ones((ih, iw), dtype=np.float32) * 0.5
+    u = np.ones((ih, iw), dtype=np.float32) * 0.5
 
     vectors = nmap_to_vectors(image)
     # vectors[..., 0] = 0.5 - image[..., 0]
@@ -654,10 +660,10 @@ def normals_to_height(image, grid_steps, iterations=2000, intensity=1.0):
         k = 2 ** k
         print("grid step:", k)
 
-        n = cup.roll(vectors[..., 0], k, axis=1)
-        n -= cup.roll(vectors[..., 0], -k, axis=1)
-        n += cup.roll(vectors[..., 1], k, axis=0)
-        n -= cup.roll(vectors[..., 1], -k, axis=0)
+        n = np.roll(vectors[..., 0], k, axis=1)
+        n -= np.roll(vectors[..., 0], -k, axis=1)
+        n += np.roll(vectors[..., 1], k, axis=0)
+        n -= np.roll(vectors[..., 1], -k, axis=0)
         n *= 0.125
 
         for ic in range(iterations):
@@ -680,22 +686,22 @@ def normals_to_height(image, grid_steps, iterations=2000, intensity=1.0):
             t *= 0.25
             u = t + n
             # zero alpha = zero height
-            # u = u * A + cup.max(u) * (1 - A)
+            # u = u * A + np.max(u) * (1 - A)
 
     u = -u
-    u -= cup.min(u)
-    u /= cup.max(u)
+    u -= np.min(u)
+    u /= np.max(u)
 
-    return cup.dstack([u, u, u, image[..., 3]])
+    return np.dstack([u, u, u, image[..., 3]])
 
 
 def delight_simple(image, dd, iterations=500):
     A = image[..., 3]
-    u = cup.ones_like(image[..., 0])
+    u = np.ones_like(image[..., 0])
 
-    grads = cup.zeros((image.shape[0], image.shape[1], 2), dtype=cup.float32)
-    grads[..., 0] = (cup.roll(image[..., 0], 1, axis=0) - image[..., 0]) * dd
-    grads[..., 1] = (image[..., 0] - cup.roll(image[..., 0], 1, axis=1)) * dd
+    grads = np.zeros((image.shape[0], image.shape[1], 2), dtype=np.float32)
+    grads[..., 0] = (np.roll(image[..., 0], 1, axis=0) - image[..., 0]) * dd
+    grads[..., 1] = (image[..., 0] - np.roll(image[..., 0], 1, axis=1)) * dd
     # grads[..., 0] = (image[..., 0] - 0.5) * (dd)
     # grads[..., 1] = (image[..., 0] - 0.5) * (dd)
     for k in range(5, -1, -1):
@@ -703,40 +709,40 @@ def delight_simple(image, dd, iterations=500):
         k = 2 ** k
         print("grid step:", k)
 
-        n = cup.roll(grads[..., 0], k, axis=1)
-        n -= cup.roll(grads[..., 0], -k, axis=1)
-        n += cup.roll(grads[..., 1], k, axis=0)
-        n -= cup.roll(grads[..., 1], -k, axis=0)
+        n = np.roll(grads[..., 0], k, axis=1)
+        n -= np.roll(grads[..., 0], -k, axis=1)
+        n += np.roll(grads[..., 1], k, axis=0)
+        n -= np.roll(grads[..., 1], -k, axis=0)
         n *= 0.125 * image[..., 3]
 
         for ic in range(iterations):
             if ic % 100 == 0:
                 print(ic)
-            t = cup.roll(u, -k, axis=0)
-            t += cup.roll(u, k, axis=0)
-            t += cup.roll(u, -k, axis=1)
-            t += cup.roll(u, k, axis=1)
+            t = np.roll(u, -k, axis=0)
+            t += np.roll(u, k, axis=0)
+            t += np.roll(u, -k, axis=1)
+            t += np.roll(u, k, axis=1)
             t *= 0.25
 
             # zero alpha = zero height
             u = t + n
-            u = u * A + cup.max(u) * (1 - A)
+            u = u * A + np.max(u) * (1 - A)
 
     u = -u
-    u -= cup.min(u)
-    u /= cup.max(u)
+    u -= np.min(u)
+    u /= np.max(u)
 
     # u *= image[..., 3]
 
-    # u -= cup.mean(u)
-    # u /= max(abs(cup.min(u)), abs(cup.max(u)))
+    # u -= np.mean(u)
+    # u /= max(abs(np.min(u)), abs(np.max(u)))
     # u *= 0.5
     # u += 0.5
     # u = 1.0 - u
 
-    # return cup.dstack([(u - image[..., 0]) * 0.5 + 0.5, u, u, image[..., 3]])
+    # return np.dstack([(u - image[..., 0]) * 0.5 + 0.5, u, u, image[..., 3]])
     u = (image[..., 0] - u) * 0.5 + 0.5
-    return cup.dstack([u, u, u, image[..., 3]])
+    return np.dstack([u, u, u, image[..., 3]])
 
 
 def fill_alpha(image, style="black"):
@@ -756,7 +762,7 @@ def fill_alpha(image, style="black"):
 
 def dog(pix, a, b, mp):
     pixb = pix.copy()
-    pix[..., :3] = cup.abs(gaussian_repeat(pix, a) - gaussian_repeat(pixb, b))[..., :3]
+    pix[..., :3] = np.abs(gaussian_repeat(pix, a) - gaussian_repeat(pixb, b))[..., :3]
     pix[pix < mp][..., :3] = 0.0
     return pix
 
@@ -854,21 +860,23 @@ def inpaint_tangents(pixels, threshold):
     # smooth
     for i in range(4):
         print("smooth step:", i)
-        pixels[invalid] = (pixels[invalid] + pixels[cl] + pixels[cr] + pixels[uc] + pixels[bc]) / 5
+        pixels[invalid] = (
+            pixels[invalid] + pixels[cl] + pixels[cr] + pixels[uc] + pixels[bc]
+        ) / 5
 
     return pixels
 
 
 def normalize_tangents(image):
     ih, iw = image.shape[0], image.shape[1]
-    vectors = cup.zeros((ih, iw, 3), dtype=cup.float32)
+    vectors = np.zeros((ih, iw, 3), dtype=np.float32)
     vectors[..., 0] = image[..., 0] - 0.5
     vectors[..., 1] = image[..., 1] - 0.5
     vectors[..., 2] = image[..., 2] - 0.5
 
     vectors = (vectors.T / np.linalg.norm(vectors, axis=2)).T * 0.5
 
-    retarr = cup.empty_like(image)
+    retarr = np.empty_like(image)
     retarr[:, :, 0] = 0.5 + vectors[:, :, 0]
     retarr[:, :, 1] = 0.5 + vectors[:, :, 1]
     retarr[:, :, 2] = 0.5 + vectors[:, :, 2]
@@ -908,7 +916,8 @@ class Swizzle_IOP(image_ops.ImageOperatorGenerator):
         self.props["order_a"] = bpy.props.StringProperty(name="Order A", default="RGBA")
         self.props["order_b"] = bpy.props.StringProperty(name="Order B", default="RBGa")
         self.props["direction"] = bpy.props.EnumProperty(
-            name="Direction", items=[("ATOB", "A to B", "", 1), ("BTOA", "B to A", "", 2)]
+            name="Direction",
+            items=[("ATOB", "A to B", "", 1), ("BTOA", "B to A", "", 2)],
         )
         self.prefix = "swizzle"
         self.info = "Channel swizzle"
@@ -1021,8 +1030,8 @@ class CropToP2_IOP(image_ops.ImageOperatorGenerator):
             offx = 0
             offy = 0
 
-            wpow = int(cup.log2(w))
-            hpow = int(cup.log2(h))
+            wpow = int(np.log2(w))
+            hpow = int(np.log2(h))
 
             offx = (w - 2 ** wpow) // 2
             offy = (h - 2 ** hpow) // 2
@@ -1070,11 +1079,15 @@ class CropToSquare_IOP(image_ops.ImageOperatorGenerator):
 class Sharpen_IOP(image_ops.ImageOperatorGenerator):
     def generate(self):
         self.props["width"] = bpy.props.IntProperty(name="Width", min=2, default=5)
-        self.props["intensity"] = bpy.props.FloatProperty(name="Intensity", min=0.0, default=0.6)
+        self.props["intensity"] = bpy.props.FloatProperty(
+            name="Intensity", min=0.0, default=0.6
+        )
         self.prefix = "sharpen"
         self.info = "Simple sharpen"
         self.category = "Filter"
-        self.payload = lambda self, image, context: sharpen(image, self.width, self.intensity)
+        self.payload = lambda self, image, context: sharpen(
+            image, self.width, self.intensity
+        )
 
 
 class Sobel_IOP(image_ops.ImageOperatorGenerator):
@@ -1092,7 +1105,10 @@ class FillAlpha_IOP(image_ops.ImageOperatorGenerator):
     def generate(self):
         self.props["style"] = bpy.props.EnumProperty(
             name="Style",
-            items=[("black", "Black color", "", 1), ("tangent", "Neutral tangent", "", 2)],
+            items=[
+                ("black", "Black color", "", 1),
+                ("tangent", "Neutral tangent", "", 2),
+            ],
         )
         self.prefix = "fill_alpha"
         self.info = "Fill alpha with color or normal"
@@ -1134,7 +1150,9 @@ class Bilateral_IOP(image_ops.ImageOperatorGenerator):
         # self.props["source"] = bpy.props.EnumProperty(
         #     name="Source", items=[("LUMINANCE", "Luminance", "", 1), ("SOBEL", "Sobel", "", 2)]
         # )
-        self.props["sigma_a"] = bpy.props.FloatProperty(name="Sigma A", min=0.01, default=3.0)
+        self.props["sigma_a"] = bpy.props.FloatProperty(
+            name="Sigma A", min=0.01, default=3.0
+        )
         self.props["sigma_b"] = bpy.props.FloatProperty(
             name="Sigma B", min=0.01, max=1.0, default=0.3
         )
@@ -1149,22 +1167,29 @@ class Bilateral_IOP(image_ops.ImageOperatorGenerator):
 class HiPass_IOP(image_ops.ImageOperatorGenerator):
     def generate(self):
         self.props["width"] = bpy.props.IntProperty(name="Width", min=1, default=2)
-        self.props["intensity"] = bpy.props.FloatProperty(name="Intensity", min=0.0, default=1.0)
+        self.props["intensity"] = bpy.props.FloatProperty(
+            name="Intensity", min=0.0, default=1.0
+        )
         self.prefix = "high_pass"
         self.info = "High pass"
         self.category = "Filter"
-        self.payload = lambda self, image, context: hi_pass(image, self.width, self.intensity)
+        self.payload = lambda self, image, context: hi_pass(
+            image, self.width, self.intensity
+        )
 
 
 class HiPassBalance_IOP(image_ops.ImageOperatorGenerator):
     def generate(self):
         self.props["width"] = bpy.props.IntProperty(name="Width", min=1, default=2)
-        self.props["zoom"] = bpy.props.IntProperty(name="Center slice", min=5, default=1000)
+        self.props["zoom"] = bpy.props.IntProperty(
+            name="Center slice", min=5, default=1000
+        )
         self.prefix = "hipass_balance"
         self.info = "Remove low frequencies from the image"
         self.category = "Balance"
-        self.force_numpy = True
-        self.payload = lambda self, image, context: hi_pass_balance(image, self.width, self.zoom)
+        self.payload = lambda self, image, context: hi_pass_balance(
+            image, self.width, self.zoom
+        )
 
 
 class ContrastBalance_IOP(image_ops.ImageOperatorGenerator):
@@ -1173,9 +1198,15 @@ class ContrastBalance_IOP(image_ops.ImageOperatorGenerator):
         self.info = "Balance contrast"
         self.category = "Balance"
 
-        self.props["gA"] = bpy.props.IntProperty(name="Range", min=1, max=256, default=20)
-        self.props["gB"] = bpy.props.IntProperty(name="Error", min=1, max=256, default=40)
-        self.props["strength"] = bpy.props.FloatProperty(name="Strength", min=0.0, default=1.0)
+        self.props["gA"] = bpy.props.IntProperty(
+            name="Range", min=1, max=256, default=20
+        )
+        self.props["gB"] = bpy.props.IntProperty(
+            name="Error", min=1, max=256, default=40
+        )
+        self.props["strength"] = bpy.props.FloatProperty(
+            name="Strength", min=0.0, default=1.0
+        )
 
         def _pl(self, image, context):
             tmp = image.copy()
@@ -1184,8 +1215,8 @@ class ContrastBalance_IOP(image_ops.ImageOperatorGenerator):
             gcr = gaussian_repeat(tmp, self.gA)
             error = (tmp - gcr) ** 2
             mask = -gaussian_repeat(error, self.gB)
-            mask -= cup.min(mask)
-            mask /= cup.max(mask)
+            mask -= np.min(mask)
+            mask /= np.max(mask)
             mask = (mask - 0.5) * self.strength + 1.0
             res = gcr + mask * (tmp - gcr)
 
@@ -1203,17 +1234,19 @@ class HistogramEQ_IOP(image_ops.ImageOperatorGenerator):
         self.prefix = "histogram_eq"
         self.info = "Histogram equalization"
         self.category = "Advanced"
-        self.force_numpy = True
-        self.payload = lambda self, image, context: hgram_equalize(image, self.intensity, 0.5)
+        self.payload = lambda self, image, context: hgram_equalize(
+            image, self.intensity, 0.5
+        )
 
 
 class Gaussianize_IOP(image_ops.ImageOperatorGenerator):
     def generate(self):
-        self.props["count"] = bpy.props.IntProperty(name="Count", min=10, max=100000, default=1000)
+        self.props["count"] = bpy.props.IntProperty(
+            name="Count", min=10, max=100000, default=1000
+        )
         self.prefix = "gaussianize"
         self.info = "Gaussianize histogram"
         self.category = "Advanced"
-        self.force_numpy = True
         self.payload = lambda self, image, context: gaussianize(image, NG=self.count)[0]
 
 
@@ -1225,7 +1258,6 @@ class GimpSeamless_IOP(image_ops.ImageOperatorGenerator):
         self.prefix = "gimp_seamless"
         self.info = "Gimp style seamless image operation"
         self.category = "Advanced"
-        self.force_numpy = True
         self.payload = lambda self, image, context: gimpify(image)
 
 
@@ -1234,7 +1266,6 @@ class HistogramSeamless_IOP(image_ops.ImageOperatorGenerator):
         self.prefix = "histogram_seamless"
         self.info = "Seamless histogram blending"
         self.category = "Advanced"
-        self.force_numpy = True
 
         def _pl(self, image, context):
             gimg, transforms = gaussianize(image)
@@ -1273,8 +1304,12 @@ class NormalsToCurvature_IOP(image_ops.ImageOperatorGenerator):
 
 class CurveToHeight_IOP(image_ops.ImageOperatorGenerator):
     def generate(self):
-        self.props["step"] = bpy.props.FloatProperty(name="Step", min=0.00001, default=0.1)
-        self.props["iterations"] = bpy.props.IntProperty(name="Iterations", min=10, default=400)
+        self.props["step"] = bpy.props.FloatProperty(
+            name="Step", min=0.00001, default=0.1
+        )
+        self.props["iterations"] = bpy.props.IntProperty(
+            name="Iterations", min=10, default=400
+        )
         self.prefix = "curvature_to_height"
         self.info = "Height from curvature"
         self.category = "Normals"
@@ -1286,7 +1321,9 @@ class CurveToHeight_IOP(image_ops.ImageOperatorGenerator):
 class NormalsToHeight_IOP(image_ops.ImageOperatorGenerator):
     def generate(self):
         self.props["grid"] = bpy.props.IntProperty(name="Grid subd", min=1, default=4)
-        self.props["iterations"] = bpy.props.IntProperty(name="Iterations", min=10, default=200)
+        self.props["iterations"] = bpy.props.IntProperty(
+            name="Iterations", min=10, default=200
+        )
         self.prefix = "normals_to_height"
         self.info = "Normals to height"
         self.category = "Normals"
@@ -1297,8 +1334,12 @@ class NormalsToHeight_IOP(image_ops.ImageOperatorGenerator):
 
 class Delight_IOP(image_ops.ImageOperatorGenerator):
     def generate(self):
-        self.props["flip"] = bpy.props.BoolProperty(name="Flip direction", default=False)
-        self.props["iterations"] = bpy.props.IntProperty(name="Iterations", min=10, default=200)
+        self.props["flip"] = bpy.props.BoolProperty(
+            name="Flip direction", default=False
+        )
+        self.props["iterations"] = bpy.props.IntProperty(
+            name="Iterations", min=10, default=200
+        )
         self.prefix = "delighting"
         self.info = "Delight simple"
         self.category = "Normals"
@@ -1317,7 +1358,9 @@ class InpaintTangents_IOP(image_ops.ImageOperatorGenerator):
         self.prefix = "inpaint_invalid"
         self.info = "Inpaint invalid tangents"
         self.category = "Normals"
-        self.payload = lambda self, image, context: inpaint_tangents(image, self.threshold)
+        self.payload = lambda self, image, context: inpaint_tangents(
+            image, self.threshold
+        )
 
 
 class NormalizeTangents_IOP(image_ops.ImageOperatorGenerator):
